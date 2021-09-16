@@ -167,6 +167,9 @@
         <div id="regions">
           <div class="region"></div>
         </div>
+        <div id="gt-regions">
+          <div class="region"></div>
+        </div>
       </div>
       <div class="flex-fill"></div>
       <div id="data-holder">
@@ -176,26 +179,42 @@
         <button type="button" class="collapsible" attr-target-id="objects">Objects (<span id="num-objects">0</span>)</button>
         <div id="objects" class="content"></div>
 
-        <button type="button" class="collapsible" attr-target-id="relations">Relations (<span id="num-relations">0</span>)</button>
+        <button type="button" class="collapsible"
+          attr-target-id="relations">Relations (<span id="num-relations">0</span>)</button>
         <div id="relations" class="content"></div>
+
+        <button type="button" class="collapsible" attr-target-id="gt-objects">GT
+          Objects (<span id="num-gt-objects">0</span>)</button>
+        <div id="gt-objects" class="content"></div>
+
+        <button type="button" class="collapsible"
+          attr-target-id="gt-relations">GT Relations (<span id="num-gt-relations">0</span>)</button>
+        <div id="gt-relations" class="content"></div>
       </div>
     </main>
     <script>
       const API_ROOT = "https://visualgenome.org";
 
       var scene_graph_index = 0;
-      var scene_graphs = null;
+      var custom_prediction = null;
+      var custom_data_info = null;
+      var gt_scene_graphs = null;
 
       var $image_holder = $("#image-holder");
       var parent_left = $image_holder.position().left;
       var parent_top = $image_holder.position().top;
 
       function get_scene_graph(id) {
-        return scene_graphs[id];
+        return custom_prediction[id.toString()];
+      }
+
+      function get_gt_scene_graph(id) {
+        return gt_scene_graphs[id];
       }
 
       function load_image(id) {
-        var curr_image_id = scene_graphs[scene_graph_index].image_id;
+        var curr_image_id =
+                /VG_100K_2\/(.+)\.jpg/g.exec(custom_data_info['idx_to_files'][scene_graph_index])[1];
 
         // Clear all loaded information
         $("#regions").html("");
@@ -216,7 +235,7 @@
           },
         });
 
-        // Load regions
+        // Load GT regions
         $.ajax({
           url: API_ROOT + "/api/v0/images/" + curr_image_id + "/regions",
           type: "GET",
@@ -237,36 +256,92 @@
           },
         });
 
-        // Load scene graph
+        // Load predicted and GT scene graph
         var scene_graph = get_scene_graph(id);
+        var gt_scene_graph = get_gt_scene_graph(id);
+        var ind_to_classes = custom_data_info['ind_to_classes'];
+        var ind_to_predicates = custom_data_info['ind_to_predicates'];
         var obj_id_to_index_map = {};
 
-        $("#num-objects").text(scene_graph.objects.length);
-        scene_graph.objects.forEach((obj, i) => {
+        var boxes = scene_graph['bbox'].slice(0, 10);
+        var box_labels = scene_graph['bbox_labels'].slice(0, 10);
+        var box_scores = scene_graph['bbox_scores'].slice(0, 10);
+        var all_rel_labels = scene_graph['rel_labels'];
+        var all_rel_scores = scene_graph['rel_scores'];
+        var all_rel_pairs = scene_graph['rel_pairs'];
+        $("#num-objects").text(boxes.length);
+        $("#num-relations").text(20);
+        $("#num-gt-objects").text(gt_scene_graph.objects.length);
+        $("#num-gt-relations").text(gt_scene_graph.relationships.length);
+
+        for (let i = 0; i < box_labels.length; i++) {
+          box_labels[i] = ind_to_classes[box_labels[i]];
+        }
+
+        for (let i = 0; i < boxes.length; i++) {
+            var left = parent_left + boxes[i][0];
+            var top = parent_top + boxes[i][1];
+            var width = boxes[i][2] - boxes[i][0];
+            var height = boxes[i][3] - boxes[i][1];
+            $("#regions").append("<div class=\"region\" id=\"obj-region-" + i +
+                    "\" style=\"left: " + left + "px; top: " + top + "px; width: "
+                    + width + "px; height: " + height + "px\"></div>")
+            $("#obj-region-" + i).attr("hidden", "hidden");
+            $("#objects").append("<div class=\"object info-row hover-red\" id=\"object-" + i + "\">" + i + ". Names: " + box_labels[i] + "</div>");
+            $("#object-" + i).hover(() => {
+              $("#obj-region-" + i).removeAttr("hidden").siblings().attr("hidden", "hidden");
+            }, () => {
+              $("#obj-region-" + i).attr("hidden", "hidden");
+          });
+        }
+
+
+        var num_rels = 0;
+        for (let i = 0; i < all_rel_pairs.length; i++) {
+          if (num_rels < 20 && all_rel_pairs[i][0] < 10 && all_rel_pairs[i][1] < 10) {
+            num_rels += 1;
+            var subject_name = box_labels[all_rel_pairs[i][0]];
+            var object_name = box_labels[all_rel_pairs[i][1]];
+            var pred_name = ind_to_predicates[all_rel_labels[i]];
+
+          $("#relations").append("<div class=\"relation info-row\" id=\"relation-" + i + "\">" + i + ". <span class=\"red\">" + subject_name + "</span> " + pred_name + " <span class=\"green\">" + object_name + "</span></div>");
+          $("#relation-" + i).hover(() => {
+            $(".region").attr("hidden", "hidden");
+            $("#obj-region-" + all_rel_pairs[i][0]).removeAttr("hidden");
+            $("#obj-region-" + all_rel_pairs[i][1]).addClass("green").removeAttr("hidden");
+          }, () => {
+            $(".region").attr("hidden", "hidden").removeClass("blue").removeClass("green");
+            });
+                }
+        }
+
+        var obj_id_to_index_map = {};
+
+        $("#num-gt-objects").text(gt_scene_graph.objects.length);
+        gt_scene_graph.objects.forEach((obj, i) => {
           var left = parent_left + obj["x"];
           var top = parent_top + obj["y"];
-          $("#regions").append("<div class=\"region\" id=\"obj-region-" + i + "\" style=\"left: " + left + "px; top: " + top + "px; width: " + obj["w"] + "px; height: " + obj["h"] + "px\"></div>")
-          $("#obj-region-" + i).attr("hidden", "hidden");
-          $("#objects").append("<div class=\"object info-row hover-red\" id=\"object-" + i + "\">" + i + ". Names: " + obj.names + ", Attributes: " + obj.attributes + "</div>");
-          $("#object-" + i).hover(() => {
-            $("#obj-region-" + i).removeAttr("hidden").siblings().attr("hidden", "hidden");
+          $("#gt-regions").append("<div class=\"region\" id=\"gt-obj-region-" + i + "\" style=\"left: " + left + "px; top: " + top + "px; width: " + obj["w"] + "px; height: " + obj["h"] + "px\"></div>")
+          $("#gt-obj-region-" + i).attr("hidden", "hidden");
+          $("#gt-objects").append("<div class=\"object info-row hover-red\" id=\"gt-object-" + i + "\">" + i + ". Names: " + obj.names + ", Attributes: " + obj.attributes + "</div>");
+          $("#gt-object-" + i).hover(() => {
+            $("#gt-obj-region-" + i).removeAttr("hidden").siblings().attr("hidden", "hidden");
           }, () => {
-            $("#obj-region-" + i).attr("hidden", "hidden");
+            $("#gt-obj-region-" + i).attr("hidden", "hidden");
           });
           obj_id_to_index_map[obj["object_id"]] = i;
         });
 
-        $("#num-relations").text(scene_graph.relationships.length);
-        scene_graph.relationships.forEach((rel, j) => {
+        gt_scene_graph.relationships.forEach((rel, j) => {
           var subject_id = obj_id_to_index_map[rel["subject_id"]];
           var object_id = obj_id_to_index_map[rel["object_id"]];
-          var subject_name = scene_graph.objects[subject_id].names[0];
-          var object_name = scene_graph.objects[object_id].names[0];
-          $("#relations").append("<div class=\"relation info-row\" id=\"relation-" + j + "\">" + j + ". <span class=\"red\">" + subject_name + "</span> " + rel["predicate"] + " <span class=\"green\">" + object_name + "</span></div>");
-          $("#relation-" + j).hover(() => {
+          var subject_name = gt_scene_graph.objects[subject_id].names[0];
+          var object_name = gt_scene_graph.objects[object_id].names[0];
+          $("#gt-relations").append("<div class=\"relation info-row\" id=\"gt-relation-" + j + "\">" + j + ". <span class=\"red\">" + subject_name + "</span> " + rel["predicate"] + " <span class=\"green\">" + object_name + "</span></div>");
+          $("#gt-relation-" + j).hover(() => {
             $(".region").attr("hidden", "hidden");
-            $("#obj-region-" + subject_id).removeAttr("hidden");
-            $("#obj-region-" + object_id).addClass("green").removeAttr("hidden");
+            $("#gt-obj-region-" + subject_id).removeAttr("hidden");
+            $("#gt-obj-region-" + object_id).addClass("green").removeAttr("hidden");
           }, () => {
             $(".region").attr("hidden", "hidden").removeClass("blue").removeClass("green");
           });
@@ -286,25 +361,34 @@
       }
 
       function next() {
-        if (scene_graph_index < scene_graphs.length - 1) {
+        if (scene_graph_index < custom_prediction.length - 1) {
           scene_graph_index += 1;
           refresh();
         }
       }
 
       function random() {
-        scene_graph_index = Math.floor(Math.random() * scene_graphs.length) + 1;
+        scene_graph_index = Math.floor(Math.random() * custom_prediction.length) + 1;
         refresh();
       }
 
       $(document).ready(function () {
-        $.getJSON("dataset/scene_graphs.json", (data) => {
-          scene_graphs = data;
+        $.getJSON("dataset/custom_prediction.json", (data) => {
+          custom_prediction = data;
+              });
+
+
+        $.getJSON("dataset/scene_graphs.json", (data1) => {
+          gt_scene_graphs = data1;
           $("#loading-mask").attr("hidden", "hidden");
-          $("#max-scene-graph-id").text(scene_graphs.length - 1);
+          $("#max-scene-graph-id").text(custom_prediction.length - 1);
 
           scene_graph_index = 0;
           refresh();
+        });
+
+        $.getJSON("dataset/custom_data_info.json", (data2) => {
+          custom_data_info = data2;
         });
 
         $("#prev").click(prev);
